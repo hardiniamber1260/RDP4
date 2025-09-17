@@ -227,11 +227,6 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Username:** RDP4"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Password:** `${{ secrets.RDP4_FIXED_PASSWORD }}"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Session Started:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-
-
-
-      
-
       - name: Keep RDP session active
         run: |
           $endTime = (Get-Date).AddMinutes(355)
@@ -242,5 +237,6 @@ jobs:
           }
           
           Write-Host "RDP session completed successfully!"
+
 		  
       
