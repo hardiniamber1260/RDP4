@@ -243,7 +243,7 @@ jobs:
           
           Write-Host "RDP session completed successfully!"
 		  
-	  - name: 🧹 PURGE any devices containing 'RDP4' (startup)
+      - name: 🧹 PURGE any devices containing 'RDP4' (startup)
         run: |
           $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
           
