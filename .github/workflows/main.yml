@@ -42,7 +42,7 @@ jobs:
           New-Item -ItemType Directory -Path "./persistent-storage/Desktop" -Force
           New-Item -ItemType Directory -Path "./persistent-storage/Downloads" -Force
 
-      - name: Restore persistent files from GitHub to C: drive
+      - name: Restore persistent files from GitHub to C drive
         run: |
           Write-Host "Restoring files from GitHub to C:\Users\RDP4\..."
           Write-Host "Source: ./persistent-storage/"
