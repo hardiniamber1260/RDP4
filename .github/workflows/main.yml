@@ -97,38 +97,27 @@ jobs:
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
-      
-      - name: Purge existing hostname from Tailnet
+
+      - name: 🧹 PURGE any devices containing 'RDP4' (startup)
         run: |
-          Write-Host "Purging any existing RDP4 hostname from Tailnet..."
-          
-          # First, disconnect completely
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" down
-          Start-Sleep -Seconds 3
-          
-          # Check if RDP4 hostname exists in Tailnet and remove it
-          try {
-              # Get list of devices in Tailnet
-              $devices = & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json | ConvertFrom-Json
-              
-              if ($devices -and $devices.Peer) {
-                  foreach ($device in $devices.Per.PSObject.Properties) {
-                      $deviceInfo = $device.Value
-                      if ($deviceInfo.DNSName -like "*RDP4*") {
-                          Write-Host "Found existing device: $($deviceInfo.DNSName) with IP: $($deviceInfo.TailscaleIPs)"
-                          # Revoke the device from Tailnet
-                          & "$env:ProgramFiles\Tailscale\tailscale.exe" revoke $deviceInfo.TailscaleIPs[0]
-                          Write-Host "Revoked device: $($deviceInfo.DNSName)"
-                      }
-                  }
-              }
-          } catch {
-              Write-Host "Could not check existing devices (may not be connected yet): $($_.Exception.Message)"
+          $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
+          $tn  = [uri]::EscapeDataString("${{ secrets.TAILSCALE_TAILNET }}")
+          $match = { param($d)
+            ($d.name -match '(?i)RDP4') -or ($d.hostname -match '(?i)RDP4') -or ($d.DNSName -match '(?i)RDP4')
           }
-          
-          # Additional cleanup: remove any local state
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
-          Start-Sleep -Seconds 2
+          try {
+            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
+            foreach ($d in $resp.devices) {
+              if (& $match $d) {
+                try {
+                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
+                  Write-Host "Deleted at start: $($d.name)"
+                } catch {
+                  Write-Warning "Failed to delete device $($d.name): $($_.Exception.Message)"
+                }
+              }
+            }
+          } catch { Write-Warning "Startup purge failed: $_" }
       
       - name: Establish Tailscale Connection with RDP4 hostname
         run: |
@@ -139,8 +128,8 @@ jobs:
           & "$env:ProgramFiles\Tailscale\tailscale.exe" down
           Start-Sleep -Seconds 2
           
-          # Force the desired hostname with --force-reauth to ensure fresh connection
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$desiredHostname --accept-routes=true --accept-dns=true --reset --force-reauth
+          # Force the desired hostname
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$desiredHostname --accept-routes=true --accept-dns=true --reset
           
           $tsIP = $null
           $tsHostname = $null
@@ -172,35 +161,7 @@ jobs:
           
           if (-not $tsIP) {
               Write-Error "Tailscale failed to connect with hostname RDP4 after $maxRetries attempts"
-              
-              # Last resort: try with completely clean state
-              Write-Host "Trying complete cleanup and reconnect..."
-              & "$env:ProgramFiles\Tailscale\tailscale.exe" down
-              & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
-              Start-Sleep -Seconds 3
-              
-              # Reinstall Tailscale to ensure clean state
-              $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-              $installerPath = "$env:TEMP\tailscale-clean.msi"
-              Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-              Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-              Remove-Item $installerPath -Force
-              Start-Sleep -Seconds 5
-              
-              & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$desiredHostname --accept-routes=true --accept-dns=true --reset --force-reauth
-              
-              $retries = 0
-              while ($retries -lt 15) {
-                  $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
-                  if ($tsIP) { break }
-                  Start-Sleep -Seconds 2
-                  $retries++
-              }
-              
-              if (-not $tsIP) {
-                  Write-Error "Tailscale completely failed to connect"
-                  exit 1
-              }
+              exit 1
           }
           
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
@@ -294,6 +255,28 @@ jobs:
               Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Connect to: $env:RDP_CONNECTION_STRING"
               Start-Sleep -Seconds 60
           }
+
+      - name: 🧹 PURGE any devices containing 'RDP4' (exit)
+        if: always()
+        run: |
+          $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
+          $tn  = [uri]::EscapeDataString("${{ secrets.TAILSCALE_TAILNET }}")
+          $match = { param($d)
+            ($d.name -match '(?i)RDP4') -or ($d.hostname -match '(?i)RDP4') -or ($d.DNSName -match '(?i)RDP4')
+          }
+          try {
+            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
+            foreach ($d in $resp.devices) {
+              if (& $match $d) {
+                try {
+                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
+                  Write-Host "Deleted at exit: $($d.name)"
+                } catch {
+                  Write-Warning "Failed to delete device $($d.name): $($_.Exception.Message)"
+                }
+              }
+            }
+          } catch { Write-Warning "Exit purge failed: $_" }
 
       - name: Final backup and push
         if: always()
