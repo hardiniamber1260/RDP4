@@ -243,36 +243,4 @@ jobs:
           
           Write-Host "RDP session completed successfully!"
 		  
-      - name: 🧹 PURGE any devices containing 'RDP4' (startup)
-        run: |
-          $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
-          
-          Write-Host "Searching for RDP4 devices to purge..."
-          
-          try {
-            # Use the correct API endpoint for listing devices
-            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/${{ secrets.TAILSCALE_TAILNET }}/devices" -ErrorAction Stop
-            
-            $rdp4Devices = $resp.devices | Where-Object { 
-              $_.name -match '(?i)rdp4' -or 
-              $_.hostname -match '(?i)rdp4' -or 
-              $_.dnsname -match '(?i)rdp4'
-            }
-            
-            Write-Host "Found $($rdp4Devices.Count) RDP4 devices to purge"
-            
-            foreach ($device in $rdp4Devices) {
-              try {
-                Write-Host "Deleting: $($device.name) (ID: $($device.id))"
-                Invoke-RestMethod -Method DELETE -Headers $hdr -Uri "https://api.tailscale.com/api/v2/device/$($device.id)" -ErrorAction Stop
-                Write-Host "✓ Successfully deleted: $($device.name)"
-              } catch {
-                Write-Warning "Failed to delete $($device.name): $($_.Exception.Message)"
-              }
-            }
-            
-          } catch {
-            Write-Warning "Device purge failed: $($_.Exception.Message)"
-            Write-Warning "Response: $($_.Exception.Response.StatusCode)"
-            Write-Warning "Make sure TAILSCALE_TAILNET is set to: hardiniamber1260.github.beta.tailscale.net"
-          }
+      
