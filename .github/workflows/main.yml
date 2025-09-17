@@ -154,7 +154,7 @@ jobs:
           Write-Host "Files Location: C:\Users\RDP4\"
           Write-Host "=================================`n"
 
-      - name: Continuous backup from C: drive to GitHub
+      - name: Continuous backup from C drive to GitHub
         run: |
           function Backup-ToGitHub {
               Write-Host "Backing up files from C:\Users\RDP4\ to GitHub..."
@@ -252,7 +252,7 @@ jobs:
           
           Write-Host "Emergency backup pushed to GitHub repository!"
 
-      - name: Final backup from C: drive to GitHub
+      - name: Final backup from C drive to GitHub
         if: always()
         run: |
           Write-Host "Performing final backup from C:\Users\RDP4\ to GitHub..."
