@@ -98,26 +98,34 @@ jobs:
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
 
-      - name: 🧹 PURGE any devices containing 'rdp4' (startup)
+      - name: 🧹 PURGE any devices containing 'RDP4'
         run: |
           $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
-          $tn  = [uri]::EscapeDataString("${{ secrets.TAILSCALE_TAILNET }}")
-          $match = { param($d)
-            ($d.name -match '(?i)rdp4') -or ($d.hostname -match '(?i)rdp4') -or ($d.DNSName -match '(?i)rdp4')
-          }
+          
           try {
-            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
-            foreach ($d in $resp.devices) {
-              if (& $match $d) {
-                try {
-                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
-                  Write-Host "Deleted at start: $($d.name)"
-                } catch {
-                  Write-Warning "Failed to delete device $($d.name): $($_.Exception.Message)"
-                }
+            $devices = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/devices" -ErrorAction Stop
+            
+            $rdp4Devices = $devices.devices | Where-Object { 
+              $_.name -match '(?i)rdp4' -or 
+              $_.hostname -match '(?i)rdp4' -or 
+              $_.DNSName -match '(?i)rdp4'
+            }
+            
+            Write-Host "Found $($rdp4Devices.Count) RDP4 devices to purge"
+            
+            foreach ($device in $rdp4Devices) {
+              try {
+                Write-Host "Deleting: $($device.name)"
+                Invoke-RestMethod -Method DELETE -Headers $hdr -Uri "https://api.tailscale.com/api/v2/device/$($device.id)" -ErrorAction Stop
+                Write-Host "✓ Successfully deleted: $($device.name)"
+              } catch {
+                Write-Warning "Failed to delete $($device.name): $($_.Exception.Message)"
               }
             }
-          } catch { Write-Warning "Startup purge failed: $_" }
+            
+          } catch {
+            Write-Warning "Device purge failed: $($_.Exception.Message)"
+          }
       
       - name: Establish Tailscale Connection with RDP4 hostname
         run: |
@@ -256,27 +264,34 @@ jobs:
               Start-Sleep -Seconds 60
           }
 
-      - name: 🧹 PURGE any devices containing 'RDP4' (exit)
-        if: always()
+      - name: 🧹 PURGE any devices containing 'RDP4'
         run: |
           $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
-          $tn  = [uri]::EscapeDataString("${{ secrets.TAILSCALE_TAILNET }}")
-          $match = { param($d)
-            ($d.name -match '(?i)rdp4') -or ($d.hostname -match '(?i)rdp4') -or ($d.DNSName -match '(?i)rdp4')
-          }
+          
           try {
-            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
-            foreach ($d in $resp.devices) {
-              if (& $match $d) {
-                try {
-                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
-                  Write-Host "Deleted at exit: $($d.name)"
-                } catch {
-                  Write-Warning "Failed to delete device $($d.name): $($_.Exception.Message)"
-                }
+            $devices = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/devices" -ErrorAction Stop
+            
+            $rdp4Devices = $devices.devices | Where-Object { 
+              $_.name -match '(?i)rdp4' -or 
+              $_.hostname -match '(?i)rdp4' -or 
+              $_.DNSName -match '(?i)rdp4'
+            }
+            
+            Write-Host "Found $($rdp4Devices.Count) RDP4 devices to purge"
+            
+            foreach ($device in $rdp4Devices) {
+              try {
+                Write-Host "Deleting: $($device.name)"
+                Invoke-RestMethod -Method DELETE -Headers $hdr -Uri "https://api.tailscale.com/api/v2/device/$($device.id)" -ErrorAction Stop
+                Write-Host "✓ Successfully deleted: $($device.name)"
+              } catch {
+                Write-Warning "Failed to delete $($device.name): $($_.Exception.Message)"
               }
             }
-          } catch { Write-Warning "Exit purge failed: $_" }
+            
+          } catch {
+            Write-Warning "Device purge failed: $($_.Exception.Message)"
+          }
 
       - name: Final backup and push
         if: always()
