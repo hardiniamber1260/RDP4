@@ -1,0 +1,232 @@
+name: RDP4 with Persistent Storage
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # Runs every 6 hours
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Configure Git for automation
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git config --global pull.rebase false
+
+      - name: Create directory structure
+        run: |
+          # Create user directories
+          New-Item -ItemType Directory -Path "C:\Users\RDP4\Documents" -Force
+          New-Item -ItemType Directory -Path "C:\Users\RDP4\Desktop" -Force
+          New-Item -ItemType Directory -Path "C:\Users\RDP4\Downloads" -Force
+          
+          # Create persistent storage directory in repo
+          New-Item -ItemType Directory -Path "./persistent-storage" -Force
+          New-Item -ItemType Directory -Path "./persistent-storage/Documents" -Force
+          New-Item -ItemType Directory -Path "./persistent-storage/Desktop" -Force
+          New-Item -ItemType Directory -Path "./persistent-storage/Downloads" -Force
+
+      - name: Restore persistent files
+        run: |
+          Write-Host "Restoring files from previous session..."
+          
+          # Restore Documents
+          if (Test-Path "./persistent-storage/Documents/" -PathType Container) {
+              $docFiles = Get-ChildItem -Path "./persistent-storage/Documents/" -File
+              if ($docFiles.Count -gt 0) {
+                  Copy-Item -Path "./persistent-storage/Documents/*" -Destination "C:\Users\RDP4\Documents\" -Recurse -Force
+                  Write-Host "Restored $($docFiles.Count) files to Documents"
+              }
+          }
+          
+          # Restore Desktop
+          if (Test-Path "./persistent-storage/Desktop/" -PathType Container) {
+              $desktopFiles = Get-ChildItem -Path "./persistent-storage/Desktop/" -File
+              if ($desktopFiles.Count -gt 0) {
+                  Copy-Item -Path "./persistent-storage/Desktop/*" -Destination "C:\Users\RDP4\Desktop\" -Recurse -Force
+                  Write-Host "Restored $($desktopFiles.Count) files to Desktop"
+              }
+          }
+          
+          # Restore Downloads
+          if (Test-Path "./persistent-storage/Downloads/" -PathType Container) {
+              $downloadFiles = Get-ChildItem -Path "./persistent-storage/Downloads/" -File
+              if ($downloadFiles.Count -gt 0) {
+                  Copy-Item -Path "./persistent-storage/Downloads/*" -Destination "C:\Users\RDP4\Downloads\" -Recurse -Force
+                  Write-Host "Restored $($downloadFiles.Count) files to Downloads"
+              }
+          }
+
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+      
+      - name: Create RDP4 User with Fixed Password
+        run: |
+          $fixedPassword = "${{ secrets.RDP4_FIXED_PASSWORD }}"
+          $securePass = ConvertTo-SecureString $fixedPassword -AsPlainText -Force
+          $userExists = Get-LocalUser -Name "RDP4" -ErrorAction SilentlyContinue
+          if ($userExists) {
+              Set-LocalUser -Name "RDP4" -Password $securePass
+          } else {
+              New-LocalUser -Name "RDP4" -Password $securePass -AccountNeverExpires
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP4" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP4" -ErrorAction SilentlyContinue
+      
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+      
+      - name: Establish Tailscale Connection with Simple Hostname
+        run: |
+          $simpleHostname = "RDP4"
+          Write-Host "Using simple hostname: $simpleHostname"
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$simpleHostname --accept-routes=true --accept-dns=true
+          
+          $tsIP = $null
+          $tsHostname = $null
+          $retries = 0
+          $maxRetries = 20
+          
+          while ($retries -lt $maxRetries) {
+              $status = & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
+              if ($status -and $status.BackendState -eq "Running") {
+                  $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
+                  $tsHostname = & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json 2>$null | ConvertFrom-Json | Select-Object -ExpandProperty Self | Select-Object -ExpandProperty DNSName -ErrorAction SilentlyContinue
+                  if ($tsIP -and $tsHostname) { break }
+              }
+              Write-Host "Waiting for Tailscale... (Attempt $($retries + 1)/$maxRetries)"
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "Tailscale failed to connect after $maxRetries attempts"
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" status
+              exit 1
+          }
+          
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          echo "TAILSCALE_HOSTNAME=$tsHostname" >> $env:GITHUB_ENV
+          echo "RDP_CONNECTION_STRING=$simpleHostname" >> $env:GITHUB_ENV
+          Write-Host "Tailscale connected successfully!"
+          Write-Host "IP: $tsIP"
+          Write-Host "Hostname: $tsHostname"
+          Write-Host "Simple Connection Name: $simpleHostname"
+      
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          Write-Host "Connection Name: $env:RDP_CONNECTION_STRING"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+      
+      - name: Display Connection Information
+        run: |
+          Write-Host "`n=== RDP ACCESS INFORMATION ==="
+          Write-Host "Connection Address: $env:RDP_CONNECTION_STRING"
+          Write-Host "IP Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP4"
+          Write-Host "Password: (from secrets.RDP4_FIXED_PASSWORD)"
+          Write-Host "=================================`n"
+          
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## RDP Connection Details"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Address:** $env:RDP_CONNECTION_STRING"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Username:** RDP4"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Password:** `${{ secrets.RDP4_FIXED_PASSWORD }}"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Session Started:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
+      - name: Auto-save files (runs in background)
+        run: |
+          function Backup-Files {
+              param($sourcePath, $backupPath, $folderName)
+              
+              if (Test-Path $sourcePath -PathType Container) {
+                  $files = Get-ChildItem -Path $sourcePath -File
+                  if ($files.Count -gt 0) {
+                      Write-Host "Backing up $($files.Count) files from $folderName..."
+                      Remove-Item -Path "$backupPath/*" -Force -Recurse -ErrorAction SilentlyContinue
+                      Copy-Item -Path "$sourcePath/*" -Destination $backupPath -Recurse -Force
+                  }
+              }
+          }
+          
+          $lastBackup = Get-Date
+          $backupInterval = 300  # 5 minutes
+          
+          while ($true) {
+              $currentTime = Get-Date
+              
+              if (($currentTime - $lastBackup).TotalSeconds -ge $backupInterval) {
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Auto-saving files..."
+                  
+                  # Backup all user directories
+                  Backup-Files -sourcePath "C:\Users\RDP4\Documents" -backupPath "./persistent-storage/Documents" -folderName "Documents"
+                  Backup-Files -sourcePath "C:\Users\RDP4\Desktop" -backupPath "./persistent-storage/Desktop" -folderName "Desktop"
+                  Backup-Files -sourcePath "C:\Users\RDP4\Downloads" -backupPath "./persistent-storage/Downloads" -folderName "Downloads"
+                  
+                  # Commit changes every 30 minutes to avoid too many commits
+                  if ((Get-Date).Minute % 30 -eq 0) {
+                      git add ./persistent-storage/
+                      git commit -m "Auto-backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm')" || echo "No changes to commit"
+                  }
+                  
+                  $lastBackup = $currentTime
+              }
+              
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Connect to: $env:RDP_CONNECTION_STRING"
+              Start-Sleep -Seconds 60
+          }
+
+      - name: Final backup and push
+        if: always()
+        run: |
+          Write-Host "Performing final backup before shutdown..."
+          
+          # Final backup of all files
+          if (Test-Path "C:\Users\RDP4\Documents" -PathType Container) {
+              Remove-Item -Path "./persistent-storage/Documents/*" -Force -Recurse -ErrorAction SilentlyContinue
+              Copy-Item -Path "C:\Users\RDP4\Documents/*" -Destination "./persistent-storage/Documents/" -Recurse -Force
+          }
+          
+          if (Test-Path "C:\Users\RDP4\Desktop" -PathType Container) {
+              Remove-Item -Path "./persistent-storage/Desktop/*" -Force -Recurse -ErrorAction SilentlyContinue
+              Copy-Item -Path "C:\Users\RDP4\Desktop/*" -Destination "./persistent-storage/Desktop/" -Recurse -Force
+          }
+          
+          if (Test-Path "C:\Users\RDP4\Downloads" -PathType Container) {
+              Remove-Item -Path "./persistent-storage/Downloads/*" -Force -Recurse -ErrorAction SilentlyContinue
+              Copy-Item -Path "C:\Users\RDP4\Downloads/*" -Destination "./persistent-storage/Downloads/" -Recurse -Force
+          }
+          
+          # Commit and push final backup
+          git add ./persistent-storage/
+          git commit -m "Final backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" || echo "No changes to commit"
+          git push
+          
+          Write-Host "Final backup completed successfully!"
+          Write-Host "Files saved to repository for next session."
