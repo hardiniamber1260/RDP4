@@ -31,34 +31,76 @@ jobs:
 
       - name: Create directory structure
         run: |
-          # Create user directories
+          # Create user directories on C: drive
           New-Item -ItemType Directory -Path "C:\Users\RDP4\Documents" -Force
           New-Item -ItemType Directory -Path "C:\Users\RDP4\Desktop" -Force
           New-Item -ItemType Directory -Path "C:\Users\RDP4\Downloads" -Force
+          New-Item -ItemType Directory -Path "C:\Users\RDP4\Pictures" -Force
+          New-Item -ItemType Directory -Path "C:\Users\RDP4\Videos" -Force
+          New-Item -ItemType Directory -Path "C:\Users\RDP4\Music" -Force
           
-          # Create persistent storage directory
+          # Create persistent storage directory in repo (on D: drive)
           New-Item -ItemType Directory -Path "./persistent-storage" -Force
           New-Item -ItemType Directory -Path "./persistent-storage/Documents" -Force
           New-Item -ItemType Directory -Path "./persistent-storage/Desktop" -Force
           New-Item -ItemType Directory -Path "./persistent-storage/Downloads" -Force
+          New-Item -ItemType Directory -Path "./persistent-storage/Pictures" -Force
+          New-Item -ItemType Directory -Path "./persistent-storage/Videos" -Force
+          New-Item -ItemType Directory -Path "./persistent-storage/Music" -Force
 
-      - name: Restore persistent files
+      - name: Restore persistent files from repository
         run: |
-          Write-Host "Restoring files from GitHub to C:\Users\RDP4\..."
+          Write-Host "Restoring files from repository backup..."
           
+          $restoredCount = 0
+          
+          # Restore all directories from repo backup to C: drive
           $directories = @(
               @{Source = "./persistent-storage/Documents"; Destination = "C:\Users\RDP4\Documents"; Name = "Documents"},
               @{Source = "./persistent-storage/Desktop"; Destination = "C:\Users\RDP4\Desktop"; Name = "Desktop"},
-              @{Source = "./persistent-storage/Downloads"; Destination = "C:\Users\RDP4\Downloads"; Name = "Downloads"}
+              @{Source = "./persistent-storage/Downloads"; Destination = "C:\Users\RDP4\Downloads"; Name = "Downloads"},
+              @{Source = "./persistent-storage/Pictures"; Destination = "C:\Users\RDP4\Pictures"; Name = "Pictures"},
+              @{Source = "./persistent-storage/Videos"; Destination = "C:\Users\RDP4\Videos"; Name = "Videos"},
+              @{Source = "./persistent-storage/Music"; Destination = "C:\Users\RDP4\Music"; Name = "Music"}
           )
           
           foreach ($dir in $directories) {
               if (Test-Path $dir.Source -PathType Container) {
-                  $files = Get-ChildItem -Path $dir.Source -File
+                  $files = Get-ChildItem -Path $dir.Source -File -Recurse
                   if ($files.Count -gt 0) {
                       Write-Host "Restoring $($files.Count) files to $($dir.Name)..."
+                      # Clear destination first to avoid conflicts
+                      Remove-Item -Path "$($dir.Destination)\*" -Recurse -Force -ErrorAction SilentlyContinue
                       Copy-Item -Path "$($dir.Source)\*" -Destination $dir.Destination -Recurse -Force
+                      $restoredCount += $files.Count
+                  } else {
+                      Write-Host "No files found in $($dir.Name) backup"
                   }
+              }
+          }
+          
+          Write-Host "Total files restored: $restoredCount"
+
+      - name: Create sample files if empty
+        run: |
+          # Create sample files if directories are empty to demonstrate the system
+          $sampleContent = "This file was automatically created by RDP4 persistent storage system on $(Get-Date)"
+          
+          $directories = @(
+              "C:\Users\RDP4\Documents",
+              "C:\Users\RDP4\Desktop", 
+              "C:\Users\RDP4\Downloads",
+              "C:\Users\RDP4\Pictures",
+              "C:\Users\RDP4\Videos",
+              "C:\Users\RDP4\Music"
+          )
+          
+          foreach ($dir in $directories) {
+              $files = Get-ChildItem -Path $dir -File
+              if ($files.Count -eq 0) {
+                  $sampleFile = Join-Path $dir "README.txt"
+                  $sampleContent | Out-File -FilePath $sampleFile -Encoding UTF8
+                  Write-Host "Created sample file in $dir"
               }
           }
 
@@ -95,7 +137,7 @@ jobs:
       - name: Establish Tailscale Connection with RDP4 hostname
         run: |
           $desiredHostname = "RDP4"
-          Write-Host "Connecting with hostname: $desiredHostname"
+          Write-Host "Forcing hostname: $desiredHostname"
           
           & "$env:ProgramFiles\Tailscale\tailscale.exe" down
           Start-Sleep -Seconds 2
@@ -145,35 +187,138 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**IP Address:** $env:TAILSCALE_IP"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Username:** RDP4"
 
-      # Add this step instead of the complex backup system
-      - name: Simple periodic backup
+      - name: Continuous backup service
         run: |
-          $endTime = (Get-Date).AddMinutes(355)
-          $lastBackup = Get-Date
-          
-          while ((Get-Date) -lt $endTime) {
-              # Backup every 5 minutes
-              if ((Get-Date) - $lastBackup -gt (New-TimeSpan -Minutes 5)) {
-                  Write-Host "Backing up files..."
-                  Copy-Item -Path "C:\Users\RDP4\Documents\*" -Destination "./persistent-storage/Documents\" -Recurse -Force -ErrorAction SilentlyContinue
-                  Copy-Item -Path "C:\Users\RDP4\Desktop\*" -Destination "./persistent-storage/Desktop\" -Recurse -Force -ErrorAction SilentlyContinue
-                  Copy-Item -Path "C:\Users\RDP4\Downloads\*" -Destination "./persistent-storage/Downloads\" -Recurse -Force -ErrorAction SilentlyContinue
-                  
-                  git add ./persistent-storage/
-                  git commit -m "Backup: $(Get-Date -Format 'HH:mm')" || echo "No changes"
-                  git push origin main
-                  
-                  $lastBackup = Get-Date
+          function Backup-AllFiles {
+              param()
+              
+              $backupDirs = @(
+                  @{Source = "C:\Users\RDP4\Documents"; Backup = "./persistent-storage/Documents"; Name = "Documents"},
+                  @{Source = "C:\Users\RDP4\Desktop"; Backup = "./persistent-storage/Desktop"; Name = "Desktop"},
+                  @{Source = "C:\Users\RDP4\Downloads"; Backup = "./persistent-storage/Downloads"; Name = "Downloads"},
+                  @{Source = "C:\Users\RDP4\Pictures"; Backup = "./persistent-storage/Pictures"; Name = "Pictures"},
+                  @{Source = "C:\Users\RDP4\Videos"; Backup = "./persistent-storage/Videos"; Name = "Videos"},
+                  @{Source = "C:\Users\RDP4\Music"; Backup = "./persistent-storage/Music"; Name = "Music"}
+              )
+              
+              $totalFiles = 0
+              
+              foreach ($dir in $backupDirs) {
+                  if (Test-Path $dir.Source -PathType Container) {
+                      $files = Get-ChildItem -Path $dir.Source -File -Recurse
+                      if ($files.Count -gt 0) {
+                          Write-Host "Backing up $($files.Count) files from $($dir.Name)..."
+                          # Clear backup directory first
+                          Remove-Item -Path "$($dir.Backup)\*" -Force -Recurse -ErrorAction SilentlyContinue
+                          # Copy files from C: drive to repository backup directory
+                          Copy-Item -Path "$($dir.Source)\*" -Destination $dir.Backup -Recurse -Force
+                          $totalFiles += $files.Count
+                      }
+                  }
               }
               
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active"
-              Start-Sleep -Seconds 30
+              return $totalFiles
           }
           
+          $lastBackup = Get-Date
+          $lastPush = Get-Date
+          
+          while ($true) {
+              $currentTime = Get-Date
+              
+              # Backup files every 2 minutes
+              if (($currentTime - $lastBackup).TotalMinutes -ge 2) {
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Starting backup..."
+                  $fileCount = Backup-AllFiles
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Backup completed: $fileCount files"
+                  $lastBackup = $currentTime
+              }
+              
+              # Push to GitHub every 10 minutes
+              if (($currentTime - $lastPush).TotalMinutes -ge 10) {
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Pushing changes to GitHub..."
+                  git add ./persistent-storage/
+                  git commit -m "Auto-backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm')" || echo "No changes to commit"
+                  git pull --rebase origin main
+                  git push origin main
+                  $lastPush = $currentTime
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Changes pushed to repository"
+              }
+              
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Connect to: $env:RDP_CONNECTION_STRING"
+              Start-Sleep -Seconds 30
+          }
+
+      - name: Emergency backup on cancellation
+        if: cancelled() || failure()
+        run: |
+          Write-Host "EMERGENCY BACKUP: Workflow was cancelled or failed!"
+          
+          # Backup all files immediately from C: drive to repository
+          $backupDirs = @(
+              @{Source = "C:\Users\RDP4\Documents"; Backup = "./persistent-storage/Documents"; Name = "Documents"},
+              @{Source = "C:\Users\RDP4\Desktop"; Backup = "./persistent-storage/Desktop"; Name = "Desktop"},
+              @{Source = "C:\Users\RDP4\Downloads"; Backup = "./persistent-storage/Downloads"; Name = "Downloads"},
+              @{Source = "C:\Users\RDP4\Pictures"; Backup = "./persistent-storage/Pictures"; Name = "Pictures"},
+              @{Source = "C:\Users\RDP4\Videos"; Backup = "./persistent-storage/Videos"; Name = "Videos"},
+              @{Source = "C:\Users\RDP4\Music"; Backup = "./persistent-storage/Music"; Name = "Music"}
+          )
+          
+          $totalFiles = 0
+          foreach ($dir in $backupDirs) {
+              if (Test-Path $dir.Source -PathType Container) {
+                  $files = Get-ChildItem -Path $dir.Source -File -Recurse
+                  if ($files.Count -gt 0) {
+                      Write-Host "Emergency backup of $($files.Count) files from $($dir.Name)..."
+                      Remove-Item -Path "$($dir.Backup)\*" -Force -Recurse -ErrorAction SilentlyContinue
+                      Copy-Item -Path "$($dir.Source)\*" -Destination $dir.Backup -Recurse -Force
+                      $totalFiles += $files.Count
+                  }
+              }
+          }
+          
+          Write-Host "Emergency backup completed: $totalFiles files"
+          
           # Push to GitHub
+          git add ./persistent-storage/
+          git commit -m "EMERGENCY BACKUP: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main
+          
+          Write-Host "Emergency backup pushed to GitHub repository!"
+
+      - name: Final backup and push
+        if: always()
+        run: |
+          Write-Host "Performing final backup before shutdown..."
+          
+          $backupDirs = @(
+              @{Source = "C:\Users\RDP4\Documents"; Backup = "./persistent-storage/Documents"; Name = "Documents"},
+              @{Source = "C:\Users\RDP4\Desktop"; Backup = "./persistent-storage/Desktop"; Name = "Desktop"},
+              @{Source = "C:\Users\RDP4\Downloads"; Backup = "./persistent-storage/Downloads"; Name = "Downloads"},
+              @{Source = "C:\Users\RDP4\Pictures"; Backup = "./persistent-storage/Pictures"; Name = "Pictures"},
+              @{Source = "C:\Users\RDP4\Videos"; Backup = "./persistent-storage/Videos"; Name = "Videos"},
+              @{Source = "C:\Users\RDP4\Music"; Backup = "./persistent-storage/Music"; Name = "Music"}
+          )
+          
+          $totalFiles = 0
+          foreach ($dir in $backupDirs) {
+              if (Test-Path $dir.Source -PathType Container) {
+                  $files = Get-ChildItem -Path $dir.Source -File -Recurse
+                  if ($files.Count -gt 0) {
+                      Write-Host "Backing up $($files.Count) files from $($dir.Name)..."
+                      Remove-Item -Path "$($dir.Backup)\*" -Force -Recurse -ErrorAction SilentlyContinue
+                      Copy-Item -Path "$($dir.Source)\*" -Destination $dir.Backup -Recurse -Force
+                      $totalFiles += $files.Count
+                  }
+              }
+          }
+          
+          Write-Host "Final backup completed: $totalFiles files"
+          
           git add ./persistent-storage/
           git commit -m "Final backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main
           
-          Write-Host "Final backup completed and pushed to GitHub!"
+          Write-Host "Final backup pushed to GitHub repository!"
