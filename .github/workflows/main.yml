@@ -29,45 +29,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global pull.rebase false
 
-      - name: Create directory structure
-        run: |
-          New-Item -ItemType Directory -Path "C:\Users\RDP4\Documents" -Force
-          New-Item -ItemType Directory -Path "C:\Users\RDP4\Desktop" -Force
-          New-Item -ItemType Directory -Path "C:\Users\RDP4\Downloads" -Force
-          
-          New-Item -ItemType Directory -Path "./persistent-storage" -Force
-          New-Item -ItemType Directory -Path "./persistent-storage/Documents" -Force
-          New-Item -ItemType Directory -Path "./persistent-storage/Desktop" -Force
-          New-Item -ItemType Directory -Path "./persistent-storage/Downloads" -Force
-
-      - name: Restore persistent files
-        run: |
-          Write-Host "Restoring files from previous session..."
-          
-          if (Test-Path "./persistent-storage/Documents/" -PathType Container) {
-              $docFiles = Get-ChildItem -Path "./persistent-storage/Documents/" -File
-              if ($docFiles.Count -gt 0) {
-                  Copy-Item -Path "./persistent-storage/Documents/*" -Destination "C:\Users\RDP4\Documents\" -Recurse -Force
-                  Write-Host "Restored $($docFiles.Count) files to Documents"
-              }
-          }
-          
-          if (Test-Path "./persistent-storage/Desktop/" -PathType Container) {
-              $desktopFiles = Get-ChildItem -Path "./persistent-storage/Desktop/" -File
-              if ($desktopFiles.Count -gt 0) {
-                  Copy-Item -Path "./persistent-storage/Desktop/*" -Destination "C:\Users\RDP4\Desktop\" -Recurse -Force
-                  Write-Host "Restored $($desktopFiles.Count) files to Desktop"
-              }
-          }
-          
-          if (Test-Path "./persistent-storage/Downloads/" -PathType Container) {
-              $downloadFiles = Get-ChildItem -Path "./persistent-storage/Downloads/" -File
-              if ($downloadFiles.Count -gt 0) {
-                  Copy-Item -Path "./persistent-storage/Downloads/*" -Destination "C:\Users\RDP4\Downloads\" -Recurse -Force
-                  Write-Host "Restored $($downloadFiles.Count) files to Downloads"
-              }
-          }
-
+     
       - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -227,102 +189,14 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Username:** RDP4"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Password:** `${{ secrets.RDP4_FIXED_PASSWORD }}"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Session Started:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-
-      - name: Auto-save files (runs in background)
+            
+      - name: Keep RDP session active
         run: |
-          function Backup-Files {
-              param($sourcePath, $backupPath, $folderName)
-              if (Test-Path $sourcePath -PathType Container) {
-                  $files = Get-ChildItem -Path $sourcePath -File
-                  if ($files.Count -gt 0) {
-                      Write-Host "Backing up $($files.Count) files from $folderName..."
-                      Remove-Item -Path "$backupPath/*" -Force -Recurse -ErrorAction SilentlyContinue
-                      Copy-Item -Path "$sourcePath/*" -Destination $backupPath -Recurse -Force
-                  }
-              }
+          $endTime = (Get-Date).AddMinutes(355)
+          
+          while ((Get-Date) -lt $endTime) {
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active"
+              Start-Sleep -Seconds 30
           }
           
-          $lastBackup = Get-Date
-          $backupInterval = 300
-          $lastPush = Get-Date
-          $pushInterval = 1800
-          
-          while ($true) {
-              $currentTime = Get-Date
-              if (($currentTime - $lastBackup).TotalSeconds -ge $backupInterval) {
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Auto-saving files..."
-                  Backup-Files -sourcePath "C:\Users\RDP4\Documents" -backupPath "./persistent-storage/Documents" -folderName "Documents"
-                  Backup-Files -sourcePath "C:\Users\RDP4\Desktop" -backupPath "./persistent-storage/Desktop" -folderName "Desktop"
-                  Backup-Files -sourcePath "C:\Users\RDP4\Downloads" -backupPath "./persistent-storage/Downloads" -folderName "Downloads"
-                  
-                  if (($currentTime - $lastPush).TotalSeconds -ge $pushInterval) {
-                      git add ./persistent-storage/
-                      git commit -m "Auto-backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm')" || echo "No changes to commit"
-                      git pull --rebase origin main
-                      git push origin main
-                      $lastPush = $currentTime
-                      Write-Host "Changes pushed to repository"
-                  }
-                  $lastBackup = $currentTime
-              }
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Connect to: $env:RDP_CONNECTION_STRING"
-              Start-Sleep -Seconds 60
-          }
-
-      - name: 🧹 PURGE any devices containing 'RDP4' (startup)
-        run: |
-          $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
-          
-          Write-Host "Searching for RDP4 devices to purge..."
-          
-          try {
-            # Use the correct API endpoint for listing devices
-            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/${{ secrets.TAILSCALE_TAILNET }}/devices" -ErrorAction Stop
-            
-            $rdp4Devices = $resp.devices | Where-Object { 
-              $_.name -match '(?i)rdp4' -or 
-              $_.hostname -match '(?i)rdp4' -or 
-              $_.dnsname -match '(?i)rdp4'
-            }
-            
-            Write-Host "Found $($rdp4Devices.Count) RDP4 devices to purge"
-            
-            foreach ($device in $rdp4Devices) {
-              try {
-                Write-Host "Deleting: $($device.name) (ID: $($device.id))"
-                Invoke-RestMethod -Method DELETE -Headers $hdr -Uri "https://api.tailscale.com/api/v2/device/$($device.id)" -ErrorAction Stop
-                Write-Host "✓ Successfully deleted: $($device.name)"
-              } catch {
-                Write-Warning "Failed to delete $($device.name): $($_.Exception.Message)"
-              }
-            }
-            
-          } catch {
-            Write-Warning "Device purge failed: $($_.Exception.Message)"
-            Write-Warning "Response: $($_.Exception.Response.StatusCode)"
-            Write-Warning "Make sure TAILSCALE_TAILNET is set to: hardiniamber1260.github.beta.tailscale.net"
-          }
-
-      - name: Final backup and push
-        if: always()
-        run: |
-          Write-Host "Performing final backup before shutdown..."
-          if (Test-Path "C:\Users\RDP4\Documents" -PathType Container) {
-              Remove-Item -Path "./persistent-storage/Documents/*" -Force -Recurse -ErrorAction SilentlyContinue
-              Copy-Item -Path "C:\Users\RDP4\Documents/*" -Destination "./persistent-storage/Documents/" -Recurse -Force
-          }
-          if (Test-Path "C:\Users\RDP4\Desktop" -PathType Container) {
-              Remove-Item -Path "./persistent-storage/Desktop/*" -Force -Recurse -ErrorAction SilentlyContinue
-              Copy-Item -Path "C:\Users\RDP4\Desktop/*" -Destination "./persistent-storage/Desktop/" -Recurse -Force
-          }
-          if (Test-Path "C:\Users\RDP4\Downloads" -PathType Container) {
-              Remove-Item -Path "./persistent-storage/Downloads/*" -Force -Recurse -ErrorAction SilentlyContinue
-              Copy-Item -Path "C:\Users\RDP4\Downloads/*" -Destination "./persistent-storage/Downloads/" -Recurse -Force
-          }
-          
-          git add ./persistent-storage/
-          git commit -m "Final backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" || echo "No changes to commit"
-          git pull --rebase origin main
-          git push origin main
-          
-          Write-Host "Final backup completed successfully!"
+          Write-Host "RDP session completed successfully!"
