@@ -5,22 +5,28 @@ on:
   schedule:
     - cron: '0 */6 * * *'  # Runs every 6 hours
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
+    permissions:
+      contents: write  # This is crucial for pushing changes
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
           fetch-depth: 0
 
       - name: Configure Git for automation
         run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions[bot]"
           git config --global pull.rebase false
 
       - name: Create directory structure
@@ -177,6 +183,8 @@ jobs:
           
           $lastBackup = Get-Date
           $backupInterval = 300  # 5 minutes
+          $lastPush = Get-Date
+          $pushInterval = 1800  # 30 minutes
           
           while ($true) {
               $currentTime = Get-Date
@@ -189,10 +197,14 @@ jobs:
                   Backup-Files -sourcePath "C:\Users\RDP4\Desktop" -backupPath "./persistent-storage/Desktop" -folderName "Desktop"
                   Backup-Files -sourcePath "C:\Users\RDP4\Downloads" -backupPath "./persistent-storage/Downloads" -folderName "Downloads"
                   
-                  # Commit changes every 30 minutes to avoid too many commits
-                  if ((Get-Date).Minute % 30 -eq 0) {
+                  # Commit changes every 30 minutes
+                  if (($currentTime - $lastPush).TotalSeconds -ge $pushInterval) {
                       git add ./persistent-storage/
                       git commit -m "Auto-backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm')" || echo "No changes to commit"
+                      git pull --rebase origin main
+                      git push origin main
+                      $lastPush = $currentTime
+                      Write-Host "Changes pushed to repository"
                   }
                   
                   $lastBackup = $currentTime
@@ -226,7 +238,8 @@ jobs:
           # Commit and push final backup
           git add ./persistent-storage/
           git commit -m "Final backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" || echo "No changes to commit"
-          git push
+          git pull --rebase origin main
+          git push origin main
           
           Write-Host "Final backup completed successfully!"
           Write-Host "Files saved to repository for next session."
