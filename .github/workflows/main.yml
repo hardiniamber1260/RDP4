@@ -145,88 +145,29 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**IP Address:** $env:TAILSCALE_IP"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "**Username:** RDP4"
 
-      - name: Create backup script
+      # Add this step instead of the complex backup system
+      - name: Simple periodic backup
         run: |
-          # Create backup script with proper YAML formatting
-          $backupScript = @'
-# Backup script to run in background
-function Backup-Files {
-    Write-Host "Starting backup..."
-    
-    $backupDirs = @(
-        @{Source = "C:\Users\RDP4\Documents"; Backup = "./persistent-storage/Documents"; Name = "Documents"},
-        @{Source = "C:\Users\RDP4\Desktop"; Backup = "./persistent-storage/Desktop"; Name = "Desktop"},
-        @{Source = "C:\Users\RDP4\Downloads"; Backup = "./persistent-storage/Downloads"; Name = "Downloads"}
-    )
-    
-    foreach ($dir in $backupDirs) {
-        if (Test-Path $dir.Source -PathType Container) {
-            $files = Get-ChildItem -Path $dir.Source -File
-            if ($files.Count -gt 0) {
-                Write-Host "Backing up $($files.Count) files from $($dir.Name)..."
-                Copy-Item -Path "$($dir.Source)\*" -Destination $dir.Backup -Recurse -Force
-            }
-        }
-    }
-    
-    # Commit and push to GitHub
-    git add ./persistent-storage/
-    git commit -m "Auto-backup: $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        git pull --rebase origin main
-        git push origin main
-        Write-Host "Backup pushed to GitHub"
-    }
-}
-
-# Run backup every 5 minutes
-while ($true) {
-    Backup-Files
-    Start-Sleep -Seconds 300
-}
-'@
-          $backupScript | Out-File -FilePath "C:\backup.ps1" -Encoding UTF8
-          Write-Host "Backup script created at C:\backup.ps1"
-
-      - name: Start background backup process
-        run: |
-          # Start backup process in background
-          Start-Process -FilePath "powershell" -ArgumentList "-File C:\backup.ps1" -WindowStyle Hidden
-          Write-Host "Background backup process started"
-
-      - name: Keep RDP session alive
-        run: |
-          # Simple keep-alive without blocking backup
           $endTime = (Get-Date).AddMinutes(355)
+          $lastBackup = Get-Date
+          
           while ((Get-Date) -lt $endTime) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Connect to: $env:RDP_CONNECTION_STRING"
-              Start-Sleep -Seconds 60
-          }
-          Write-Host "Session time completed"
-
-      - name: Final manual backup
-        if: always()
-        run: |
-          Write-Host "Performing final manual backup..."
-          
-          # Stop background process
-          Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*backup.ps1*" } | Stop-Process -Force
-          
-          # Manual backup
-          $backupDirs = @(
-              @{Source = "C:\Users\RDP4\Documents"; Backup = "./persistent-storage/Documents"; Name = "Documents"},
-              @{Source = "C:\Users\RDP4\Desktop"; Backup = "./persistent-storage/Desktop"; Name = "Desktop"},
-              @{Source = "C:\Users\RDP4\Downloads"; Backup = "./persistent-storage/Downloads"; Name = "Downloads"}
-          )
-          
-          foreach ($dir in $backupDirs) {
-              if (Test-Path $dir.Source -PathType Container) {
-                  $files = Get-ChildItem -Path $dir.Source -File
-                  if ($files.Count -gt 0) {
-                      Write-Host "Backing up $($files.Count) files from $($dir.Name)..."
-                      Copy-Item -Path "$($dir.Source)\*" -Destination $dir.Backup -Recurse -Force
-                  }
+              # Backup every 5 minutes
+              if ((Get-Date) - $lastBackup -gt (New-TimeSpan -Minutes 5)) {
+                  Write-Host "Backing up files..."
+                  Copy-Item -Path "C:\Users\RDP4\Documents\*" -Destination "./persistent-storage/Documents\" -Recurse -Force -ErrorAction SilentlyContinue
+                  Copy-Item -Path "C:\Users\RDP4\Desktop\*" -Destination "./persistent-storage/Desktop\" -Recurse -Force -ErrorAction SilentlyContinue
+                  Copy-Item -Path "C:\Users\RDP4\Downloads\*" -Destination "./persistent-storage/Downloads\" -Recurse -Force -ErrorAction SilentlyContinue
+                  
+                  git add ./persistent-storage/
+                  git commit -m "Backup: $(Get-Date -Format 'HH:mm')" || echo "No changes"
+                  git push origin main
+                  
+                  $lastBackup = Get-Date
               }
+              
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active"
+              Start-Sleep -Seconds 30
           }
           
           # Push to GitHub
