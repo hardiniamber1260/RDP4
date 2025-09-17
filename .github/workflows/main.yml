@@ -70,15 +70,15 @@ jobs:
             # Use the correct API endpoint for listing devices
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/${{ secrets.TAILSCALE_TAILNET }}/devices" -ErrorAction Stop
             
-            $rdp4Devices = $resp.devices | Where-Object { 
-              $_.name -match '(?i)rdp4' -or 
-              $_.hostname -match '(?i)rdp4' -or 
-              $_.dnsname -match '(?i)rdp4'
+            $RDP4Devices = $resp.devices | Where-Object { 
+              $_.name -match '(?i)RDP4' -or 
+              $_.hostname -match '(?i)RDP4' -or 
+              $_.dnsname -match '(?i)RDP4'
             }
             
-            Write-Host "Found $($rdp4Devices.Count) RDP4 devices to purge"
+            Write-Host "Found $($RDP4Devices.Count) RDP4 devices to purge"
             
-            foreach ($device in $rdp4Devices) {
+            foreach ($device in $RDP4Devices) {
               try {
                 Write-Host "Deleting: $($device.name) (ID: $($device.id))"
                 Invoke-RestMethod -Method DELETE -Headers $hdr -Uri "https://api.tailscale.com/api/v2/device/$($device.id)" -ErrorAction Stop
@@ -200,7 +200,7 @@ jobs:
           }
           
           Write-Host "RDP session completed successfully!"
-      - name: 🧹 PURGE any devices containing 'RDP4' (startup)
+      - name: 🧹 PURGE any devices containing 'RDP4' (shutdown)
         run: |
           $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
           
@@ -210,15 +210,15 @@ jobs:
             # Use the correct API endpoint for listing devices
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/${{ secrets.TAILSCALE_TAILNET }}/devices" -ErrorAction Stop
             
-            $rdp4Devices = $resp.devices | Where-Object { 
-              $_.name -match '(?i)rdp4' -or 
-              $_.hostname -match '(?i)rdp4' -or 
-              $_.dnsname -match '(?i)rdp4'
+            $RDP4Devices = $resp.devices | Where-Object { 
+              $_.name -match '(?i)RDP4' -or 
+              $_.hostname -match '(?i)RDP4' -or 
+              $_.dnsname -match '(?i)RDP4'
             }
             
-            Write-Host "Found $($rdp4Devices.Count) RDP4 devices to purge"
+            Write-Host "Found $($RDP4Devices.Count) RDP4 devices to purge"
             
-            foreach ($device in $rdp4Devices) {
+            foreach ($device in $RDP4Devices) {
               try {
                 Write-Host "Deleting: $($device.name) (ID: $($device.id))"
                 Invoke-RestMethod -Method DELETE -Headers $hdr -Uri "https://api.tailscale.com/api/v2/device/$($device.id)" -ErrorAction Stop
