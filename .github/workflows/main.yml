@@ -230,7 +230,20 @@ jobs:
 
 
 
-      - name: 🧹 PURGE any devices containing 'RDP4' (startup)
+      
+
+      - name: Keep RDP session active
+        run: |
+          $endTime = (Get-Date).AddMinutes(355)
+          
+          while ((Get-Date) -lt $endTime) {
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active"
+              Start-Sleep -Seconds 30
+          }
+          
+          Write-Host "RDP session completed successfully!"
+		  
+	  - name: 🧹 PURGE any devices containing 'RDP4' (startup)
         run: |
           $hdr = @{ Authorization = "Bearer ${{ secrets.TAILSCALE_API_KEY }}" }
           
@@ -263,14 +276,3 @@ jobs:
             Write-Warning "Response: $($_.Exception.Response.StatusCode)"
             Write-Warning "Make sure TAILSCALE_TAILNET is set to: hardiniamber1260.github.beta.tailscale.net"
           }
-
-      - name: Keep RDP session active
-        run: |
-          $endTime = (Get-Date).AddMinutes(355)
-          
-          while ((Get-Date) -lt $endTime) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active"
-              Start-Sleep -Seconds 30
-          }
-          
-          Write-Host "RDP session completed successfully!"
