@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import time
+import random  # This is a built-in module, safe to import
 
 def install_dependencies():
     """Install required packages if not already installed"""
@@ -20,6 +21,22 @@ def install_dependencies():
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
     
     print("All dependencies installed successfully!")
+
+# Install dependencies first
+install_dependencies()
+
+# Now import all required modules after installation
+import requests
+import psutil
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+import pyautogui
+import pygetwindow as gw
+
+# ... rest of your code remains the same ...
 
 # Import all required modules after installation
 import random
@@ -177,19 +194,26 @@ def wait_for_warp_ui():
     print("Waiting for Warp UI to appear...")
     max_wait_time = 60
     start_time = time.time()
+    warp_detected = False
     
     while time.time() - start_time < max_wait_time:
         try:
-            # Look for Warp window
-            warp_windows = gw.getWindowsWithTitle('WARP')
-            if warp_windows:
-                print("Warp UI detected!")
-                # Bring the window to front
-                warp_windows[0].activate()
-                time.sleep(2)  # Wait for window to fully load
-                return True
-        except:
-            pass
+            # Look for Warp window with various possible titles
+            warp_titles = ['WARP', 'Cloudflare', 'Cloudflare WARP']
+            for title in warp_titles:
+                warp_windows = gw.getWindowsWithTitle(title)
+                if warp_windows:
+                    print(f"Warp UI detected with title: {title}!")
+                    warp_detected = True
+                    # Bring the window to front and wait for it to stabilize
+                    try:
+                        warp_windows[0].activate()
+                        time.sleep(3)  # Wait for window to fully load and stabilize
+                    except:
+                        pass
+                    return True
+        except Exception as e:
+            print(f"Error detecting Warp UI: {e}")
         
         time.sleep(2)
     
