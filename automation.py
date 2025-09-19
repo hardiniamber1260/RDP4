@@ -191,35 +191,28 @@ def install_warp_windows(installer_path):
 
 def wait_for_warp_ui():
     """Wait for Warp UI to appear after installation"""
-    #print("Waiting for Warp UI to appear...")
-    #max_wait_time = 60
-    #start_time = time.time()
-    #warp_detected = False
-    #
-    #while time.time() - start_time < max_wait_time:
-    #    try:
-    #        # Look for Warp window with various possible titles
-    #        warp_titles = ['WARP', 'Cloudflare', 'Cloudflare WARP']
-    #        for title in warp_titles:
-    #            warp_windows = gw.getWindowsWithTitle(title)
-    #            if warp_windows:
-    #                print(f"Warp UI detected with title: {title}!")
-    #                warp_detected = True
-    #                # Bring the window to front and wait for it to stabilize
-    #                try:
-    #                    warp_windows[0].activate()
-    #                    time.sleep(3)  # Wait for window to fully load and stabilize
-    #                except:
-    #                    pass
-    #                return True
-    #    except Exception as e:
-    #        print(f"Error detecting Warp UI: {e}")
-    #    
-    #    time.sleep(2)
-    #
+    print("Waiting for Warp UI to appear...")
+    max_wait_time = 60
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait_time:
+        try:
+            # Look for Warp window
+            warp_windows = gw.getWindowsWithTitle('WARP')
+            if warp_windows:
+                print("Warp UI detected!")
+                # Bring the window to front
+                warp_windows[0].activate()
+                time.sleep(2)  # Wait for window to fully load
+                return True
+        except:
+            pass
+        
+        time.sleep(2)
+    
     print("Warp UI did not appear within expected time")
     return False
-    
+
 def connect_warp_cli():
     """Connect to WARP using command line interface"""
     try:
