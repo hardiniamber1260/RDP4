@@ -219,7 +219,7 @@ def wait_for_warp_ui():
     
     print("Warp UI did not appear within expected time")
     return False
-
+    
 def connect_warp_cli():
     """Connect to WARP using command line interface"""
     try:
